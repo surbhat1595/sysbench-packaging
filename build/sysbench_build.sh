@@ -355,7 +355,7 @@ build_srpm(){
     cd ${WORKDIR}
     mv -fv ${TARFILE} ${WORKDIR}/rpmbuild/SOURCES
     #
-    sed -i "s:@@VERSION@@:${SYSBENCH_BRANCH}:g" rpmbuild/SPECS/sysbench.spec
+    sed -i "s:@@VERSION@@:${VERSION}:g" rpmbuild/SPECS/sysbench.spec
     sed -i "s:@@RELEASE@@:${RPM_RELEASE}:g" rpmbuild/SPECS/sysbench.spec
     #
     rpmbuild -bs --define "_topdir ${WORKDIR}/rpmbuild" --define "dist .generic" rpmbuild/SPECS/sysbench.spec
@@ -444,6 +444,8 @@ build_source_deb(){
     #
     tar xzf ${NEWTAR}
     cd ${NAME}-${VERSION}
+    rm -rf ${WORKDIR}/sysbench-packaging/debian/compat
+    echo 9 > ${WORKDIR}/sysbench-packaging/debian/compat
     patch -p0 < ${WORKDIR}/sysbench-packaging/debian/debian.patch
     dch -D unstable --force-distribution -v "${VERSION}-${DEB_RELEASE}" "Update to new upstream release SysBench ${VERSION}-${DEB_RELEASE}"
     dpkg-buildpackage -S
@@ -528,20 +530,20 @@ TARBALL=0
 OS_NAME=
 ARCH=
 OS=
-SYSBENCH_BRANCH="1.0.20"
+SYSBENCH_BRANCH="1.1.0"
 TPC_BRANCH="master"
 BRANCH="1.0.20"
 PACK_BRANCH="main"
 INSTALL=0
-RPM_RELEASE=8
-DEB_RELEASE=8
+RPM_RELEASE=1
+DEB_RELEASE=1
 REVISION=0
 TPCC_REPO="https://github.com/Percona-Lab/sysbench-tpcc.git"
 GIT_PACK_REPO="https://github.com/percona/sysbench-packaging.git"
 GIT_REPO="https://github.com/akopytov/sysbench.git"
 NAME=sysbench
 parse_arguments PICK-ARGS-FROM-ARGV "$@"
-VERSION=$SYSBENCH_BRANCH
+VERSION=1.1.0
 
 check_workdir
 get_system
