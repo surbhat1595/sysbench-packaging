@@ -48,6 +48,8 @@ parse_arguments() {
             --branch=*) SYSBENCH_BRANCH="$val" ;;
             --tpcc_branch=*) TPC_BRANCH="$val" ;;
             --pack_branch=*) PACK_BRANCH="$val" ;;
+            --git_pack_repo=*) GIT_PACK_REPO="$val" ;;
+            --tpcc_repo=*) TPCC_REPO="$val" ;;
             --install_deps=*) INSTALL="$val" ;;
             --help) usage ;;      
             *)
@@ -93,6 +95,7 @@ get_sources(){
         echo "Sources will not be downloaded"
         return 0
     fi
+
     git clone ${GIT_REPO}
     retval=$?
     if [ $retval != 0 ]
@@ -101,12 +104,16 @@ get_sources(){
         exit 1
     fi
     mv $NAME $NAME-$VERSION
+    git clone ${GIT_PACK_REPO}
+    cd sysbench-packaging
+    git checkout ${PACK_BRANCH}
+    cd ..
     cd $NAME-$VERSION
     if [ ! -z $SYSBENCH_BRANCH ]
     then
         git reset --hard
         git clean -xdf
-        git checkout $BRANCH
+        git checkout ${SYSBENCH_BRANCH}
     fi
 
     rm -f ${WORKDIR}/*.tar.gz
@@ -121,7 +128,10 @@ get_sources(){
                 git clean -xdf
                 git checkout ${TPCC_BRANCH}
             fi
-    
+    cd ${WORKDIR}/$NAME-$VERSION
+    rm -rf debian rpm
+    mv ${WORKDIR}/sysbench-packaging/rpm .
+    mv ${WORKDIR}/sysbench-packaging/debian .
     cd ${WORKDIR}
 
     echo "VERSION=${VERSION}" > sysbench.properties
@@ -185,15 +195,19 @@ install_deps() {
     CURPLACE=$(pwd)
     if [ "x$OS" = "xrpm" ]
     then
+        yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm
+        yum module disable -y mysql
+        percona-release enable ps-80 release
         if [ $RHEL -lt 9 ]; then
             add_percona_yum_repo
+            yum-config-manager --enable ol8_codeready_builder
         else
             yum -y update
             yum-config-manager --enable ol9_codeready_builder
         fi
         yum -y install git wget
         yum -y install epel-release rpmdevtools bison yum-utils
-        yum -y install rpm-build automake libaio-devel libtool make postgresql-devel mariadb-devel
+        yum -y install rpm-build automake libaio-devel libtool make postgresql-devel percona-server-shared percona-server-devel
         if [ $RHEL = 8 ]; then
             cat /etc/os-release
             sed -i 's/mirrorlist=/#mirrorlist=/g' /etc/yum.repos.d/CentOS-*
@@ -228,24 +242,20 @@ install_deps() {
             head -1 /usr/bin/yum
         fi
 
-        cd $WORKDIR
-        link="https://raw.githubusercontent.com/akopytov/sysbench/${BRANCH}/rpm/sysbench.spec"
-        wget $link
-        sed -i 's|x.y.z|1.0|' sysbench.spec
-        yum-builddep -y $WORKDIR/$NAME.spec
     else
         apt-get -y update
         DEBIAN_FRONTEND=noninteractive apt-get -y install git wget curl lsb-release gnupg2 apt-utils
       #  add_percona_apt_repo
+        wget https://repo.percona.com/apt/percona-release_latest.generic_all.deb
+        dpkg -i percona-release_latest.generic_all.deb
+        rm -f percona-release_latest.generic_all.deb
+        percona-release enable ps-80 release
+        percona-release enable ppg-16 release
         apt-get -y update
-        DEBIAN_FRONTEND=noninteractive apt-get -y install fakeroot debhelper debconf devscripts equivs libpq-dev pkg-config
+        DEBIAN_FRONTEND=noninteractive apt-get -y install fakeroot debhelper debconf devscripts equivs libpq-dev pkg-config libperconaserverclient21-dev
         CURPLACE=$(pwd)
         cd $WORKDIR
-        link="https://raw.githubusercontent.com/akopytov/sysbench/master/debian/control"
-        wget $link
-        cd $CURPLACE
         sed -i 's:apt-get :apt-get -y --force-yes :g' /usr/bin/mk-build-deps
-        mk-build-deps --install $WORKDIR/control
         sed -e '/.*backports.*/d' /etc/apt/sources.list > sources.list.new
         mv -f sources.list.new /etc/apt/sources.list
 
@@ -263,9 +273,9 @@ install_deps() {
         #wget --no-check-certificate https://jenkins.percona.com/apt-repo/8507EFA5.pub -O - | sudo apt-key add -
         apt-get -y install dpkg-dev
         if [ $DEBIAN_VERSION = focal -o $DEBIAN_VERSION = jammy -o $DEBIAN_VERSION = noble ]; then
-            DEBIAN_FRONTEND=noninteractive apt-get -y install libaio-dev autoconf automake libtool default-libmysqlclient-dev libpq-dev pkg-config build-essential devscripts debconf gcc g++
+            DEBIAN_FRONTEND=noninteractive apt-get -y install libaio-dev autoconf automake libtool pkg-config build-essential devscripts debconf gcc g++
         else
-            apt-get -y install dpkg-dev libaio-dev debhelper autoconf automake libtool libssl-dev libpq-dev pkg-config build-essential devscripts debconf gcc g++
+            apt-get -y install dpkg-dev libaio-dev debhelper autoconf automake libtool libssl-dev  pkg-config build-essential devscripts debconf gcc g++
         fi
         if [ $DEBIAN_VERSION = focal -o $DEBIAN_VERSION = jammy -o $DEBIAN_VERSION = noble ]; then
             DEBIAN_FRONTEND=noninteractive apt-get -y install python2
@@ -275,7 +285,6 @@ install_deps() {
             DEBIAN_FRONTEND=noninteractive apt-get -y install python
         fi    
 
-        apt-get -y install default-libmysqlclient-dev || true
     fi
     return;
 }
@@ -342,15 +351,9 @@ build_srpm(){
     mkdir -vp rpmbuild/{SOURCES,SPECS,BUILD,SRPMS,RPMS}
     #
     #bzr branch lp:~percona-core/sysbench/sysbench-packaging
-    rm -rf sysbench-packaging
-    git clone ${GIT_PACK_REPO}
-    cd sysbench-packaging
-    git checkout ${PACK_BRANCH}
-    cd ..
     #
     cd ${WORKDIR}/rpmbuild/SPECS
     tar vxzf ${WORKDIR}/${TARFILE} --wildcards '*/rpm/sysbench.spec' --strip=2
-    patch -p0 sysbench.spec < ${WORKDIR}/sysbench-packaging/rpm/spec.patch
     #
     cd ${WORKDIR}
     mv -fv ${TARFILE} ${WORKDIR}/rpmbuild/SOURCES
@@ -436,17 +439,9 @@ build_source_deb(){
     mv ${TARFILE} ${NEWTAR}
     #
     #bzr branch lp:~percona-core/sysbench/sysbench-packaging
-    rm -rf sysbench-packaging
-    git clone ${GIT_PACK_REPO}
-    cd sysbench-packaging
-    git checkout ${PACK_BRANCH}
-    cd ..
     #
     tar xzf ${NEWTAR}
     cd ${NAME}-${VERSION}
-    rm -rf ${WORKDIR}/sysbench-packaging/debian/compat
-    echo 9 > ${WORKDIR}/sysbench-packaging/debian/compat
-    patch -p0 < ${WORKDIR}/sysbench-packaging/debian/debian.patch
     dch -D unstable --force-distribution -v "${VERSION}-${DEB_RELEASE}" "Update to new upstream release SysBench ${VERSION}-${DEB_RELEASE}"
     dpkg-buildpackage -S
     #
@@ -457,9 +452,11 @@ build_source_deb(){
     cp *_source.changes $WORKDIR/source_deb
     cp *.dsc $WORKDIR/source_deb
     cp *.tar* $WORKDIR/source_deb
+    cp *.diff.gz* $WORKDIR/source_deb
     cp *_source.changes $CURDIR/source_deb
     cp *.dsc $CURDIR/source_deb
     cp *.tar* $CURDIR/source_deb
+    cp *.diff.gz* $CURDIR/source_deb
 }
 
 build_deb(){
@@ -473,12 +470,11 @@ build_deb(){
         echo "It is not possible to build source deb here"
         exit 1
     fi
-    for file in 'dsc' 'orig.tar.gz' 'changes' 'debian.tar.*z'
+    for file in 'dsc' 'orig.tar.gz' 'changes' 'diff.gz'
     do
         get_deb_sources $file
     done
     cd $WORKDIR
-    rm -fv *.deb
     export DEBIAN_VERSION="$(lsb_release -sc)"
     DSC=$(basename $(find . -name '*.dsc' | sort | tail -n 1))
     DIRNAME=$(echo ${DSC} | sed -e 's:_:-:g' | awk -F'-' '{print $1"-"$2}')
@@ -491,14 +487,12 @@ build_deb(){
     #
     dpkg-source -x ${DSC}
     cd ${DIRNAME}
+    ls -la debian
     #
     #if [ ${DEBIAN_VERSION} = "xenial" ]; then
     #    sed -ie 's/MYSQL_LIBS="-L$ac_cv_mysql_libs -lmysqlclient_r"/MYSQL_LIBS="-L$ac_cv_mysql_libs -lmysqlclient"/' m4/ac_check_mysqlr.m4
     #fi
     
-    if [ ${DEBIAN_VERSION} = "stretch" ]; then
-        sed -ie 's/libmysqlclient-dev/default-libmysqlclient-dev/' debian/control
-    fi
     if [ ${DEBIAN_VERSION} = "focal" -o ${DEBIAN_VERSION} = "jammy" ]; then
         sed -ie 's/python/python2/' debian/control
     fi
@@ -530,8 +524,8 @@ TARBALL=0
 OS_NAME=
 ARCH=
 OS=
-SYSBENCH_BRANCH="1.1.0"
-TPC_BRANCH="master"
+SYSBENCH_BRANCH="master"
+TPC_BRANCH="1.0.20"
 BRANCH="1.0.20"
 PACK_BRANCH="main"
 INSTALL=0
